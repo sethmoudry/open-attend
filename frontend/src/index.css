@@ -1,0 +1,90 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply min-h-screen bg-slate-100 font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  /* Custom scrollbar for transcript panels */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300 dark:bg-slate-600;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-slate-500;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-clinical-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-clinical-700 focus:outline-none focus:ring-2 focus:ring-clinical-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-slate-900;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-150 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-clinical-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 dark:focus:ring-offset-slate-900;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center rounded-lg bg-alert-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-alert-700 focus:outline-none focus:ring-2 focus:ring-alert-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-slate-900;
+  }
+
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800;
+  }
+
+  .input-field {
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 shadow-sm transition-colors focus:border-clinical-500 focus:outline-none focus:ring-2 focus:ring-clinical-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500;
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300;
+  }
+
+  /* SOAP markdown -- tighter spacing for clinical notes */
+  .soap-markdown p {
+    @apply my-1;
+  }
+  .soap-markdown ul, .soap-markdown ol {
+    @apply my-1 pl-4;
+  }
+  .soap-markdown li {
+    @apply my-0.5;
+  }
+  .soap-markdown strong {
+    @apply font-semibold text-slate-900 dark:text-slate-100;
+  }
+  .soap-markdown h1, .soap-markdown h2, .soap-markdown h3 {
+    @apply mt-2 mb-1 font-semibold text-slate-800 dark:text-slate-200;
+  }
+
+  /* Recording pulse animation */
+  .recording-pulse {
+    animation: pulse-recording 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-recording {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+}

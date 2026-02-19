@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.env
+/tmp/uploads/
+/tmp/exports/
+data/faiss_index.bin
+data/atlas/
+data/feedback.json
+backend/data/icd10cm_codes.tsv
+*.egg-info/
+.venv/
+.DS_Store
+eval/data/
+eval/results/

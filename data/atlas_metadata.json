@@ -1,0 +1,92 @@
+[
+  {
+    "filename": "acne_001.jpg",
+    "condition_label": "Acne Vulgaris",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "acne_002.jpg",
+    "condition_label": "Acne Vulgaris",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "basal_cell_001.jpg",
+    "condition_label": "Basal Cell Carcinoma",
+    "source": "ISIC-2024",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "basal_cell_002.jpg",
+    "condition_label": "Basal Cell Carcinoma",
+    "source": "ISIC-2024",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "dermatitis_001.jpg",
+    "condition_label": "Contact Dermatitis",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "eczema_001.jpg",
+    "condition_label": "Eczema",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "eczema_002.jpg",
+    "condition_label": "Eczema",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "fungal_001.jpg",
+    "condition_label": "Tinea Corporis",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "melanoma_001.jpg",
+    "condition_label": "Melanoma",
+    "source": "ISIC-2024",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "melanoma_002.jpg",
+    "condition_label": "Melanoma",
+    "source": "ISIC-2024",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "psoriasis_001.jpg",
+    "condition_label": "Psoriasis",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "psoriasis_002.jpg",
+    "condition_label": "Psoriasis",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "rosacea_001.jpg",
+    "condition_label": "Rosacea",
+    "source": "DermNet",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "squamous_cell_001.jpg",
+    "condition_label": "Squamous Cell Carcinoma",
+    "source": "ISIC-2024",
+    "embedding_dim": 768
+  },
+  {
+    "filename": "vitiligo_001.jpg",
+    "condition_label": "Vitiligo",
+    "source": "DermNet",
+    "embedding_dim": 768
+  }
+]
