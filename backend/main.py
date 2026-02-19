@@ -210,6 +210,8 @@ async def lifespan(app: FastAPI):
     await _seed_demo_data()
     yield
     await store.stop()
+    from llm import shutdown as llm_shutdown
+    await llm_shutdown()
 
 
 app = FastAPI(
@@ -341,8 +343,6 @@ async def update_soap(session_id: str, req: SOAPUpdateRequest):
     session = await store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    from datetime import datetime, timezone
 
     soap_updates: dict = {}
     for field in ("subjective", "objective", "assessment", "plan"):
@@ -652,8 +652,6 @@ async def approve_session(session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    from datetime import datetime, timezone
-
     reviewed_soap = session.soap_note.model_copy(
         update={"status": SOAPStatus.REVIEWED, "last_updated": datetime.now(timezone.utc)}
     )
@@ -737,7 +735,9 @@ async def post_feedback(req: FeedbackRequest):
             existing = []
 
     existing.append(entry)
-    FEEDBACK_FILE.write_text(json.dumps(existing, indent=2))
+    await asyncio.to_thread(
+        FEEDBACK_FILE.write_text, json.dumps(existing, indent=2)
+    )
 
     return {"status": "ok"}
 

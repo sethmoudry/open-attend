@@ -114,10 +114,34 @@ MOCK_RESPONSES: dict[str, dict] = {
         "mental_health_signals": [],
         "alerts": [],
         "orders": [],
+        "medications": [],
+        "medication_source": "patient_reported",
+        "soap_routing": "subjective",
         "soap_updates": {
             "subjective": "Headache x3 days, dizziness on standing.",
             "objective": "BP 148/92.",
         },
+    },
+    "icd10": {
+        "codes": [
+            {"code": "G43.1", "description": "Migraine with aura", "confidence": 0.92},
+        ]
+    },
+    "cpt": {
+        "codes": [
+            {"code": "99214", "description": "Office visit, established", "confidence": 0.85},
+        ]
+    },
+    "follow_ups": {
+        "follow_ups": [
+            {"action": "Neurology follow-up", "type": "referral", "timeframe": "4 weeks", "details": "Migraine with aura evaluation"},
+        ]
+    },
+    "patient_summary": {
+        "visit_summary": "You came in for a severe headache with visual changes.",
+        "new_medications": ["Sumatriptan 50mg as needed for migraines"],
+        "follow_up_steps": ["See neurologist in 4 weeks"],
+        "when_to_seek_care": "If you experience the worst headache of your life, sudden vision loss, or weakness",
     },
 }
 
@@ -141,6 +165,14 @@ def install_mock_llm() -> None:
             return MOCK_RESPONSES["differential"]
         if "red flag" in prompt_lower:
             return MOCK_RESPONSES["red_flags"]
+        if "icd" in prompt_lower:
+            return MOCK_RESPONSES["icd10"]
+        if "cpt" in prompt_lower:
+            return MOCK_RESPONSES["cpt"]
+        if "follow" in prompt_lower:
+            return MOCK_RESPONSES["follow_ups"]
+        if "summary" in prompt_lower and "patient" in prompt_lower:
+            return MOCK_RESPONSES["patient_summary"]
         if "soap" in prompt_lower or "section" in prompt_lower:
             return MOCK_RESPONSES["soap_section"]
         # Orchestrator classification prompt
@@ -279,6 +311,34 @@ async def scenario_detect_red_flags(text: str) -> Any:
     return await detect_red_flags(text, symptoms=SAMPLE_SYMPTOMS, chunk_id="bench")
 
 
+async def scenario_extract_icd10(text: str) -> Any:
+    from tools import extract_icd10_codes
+    return await extract_icd10_codes(text)
+
+
+async def scenario_extract_cpt(text: str) -> Any:
+    from tools import extract_cpt_codes
+    return await extract_cpt_codes(text)
+
+
+async def scenario_extract_follow_ups(text: str) -> Any:
+    from tools import extract_follow_ups
+    return await extract_follow_ups(plan=text)
+
+
+async def scenario_generate_summary() -> Any:
+    from models import FollowUpItem, Medication, SOAPNote
+    from tools import generate_patient_summary
+
+    soap = SOAPNote(
+        subjective="Headache x3 days.",
+        objective="BP 148/92.",
+        assessment="Tension headache vs hypertensive.",
+        plan="Start topiramate, neurology referral.",
+    )
+    return await generate_patient_summary(soap, [Medication(name="topiramate")], [])
+
+
 async def scenario_process_chunk(text: str) -> Any:
     from models import Session, Speaker, TranscriptChunk
     from orchestrator import process_chunk
@@ -318,23 +378,38 @@ async def run_benchmarks(runs: int, output_dir: Path) -> dict:
     audio_bytes = load_test_audio()
 
     scenarios = [
-        ("transcribe()", scenario_transcribe, (audio_bytes,), {}),
-        ("extract_medications()", scenario_extract_medications, (SAMPLE_MEDICATIONS_TEXT,), {}),
-        ("check_interactions()", scenario_check_interactions, (), {}),
-        ("build_differential()", scenario_build_differential, (), {}),
-        ("draft_soap_section()", scenario_draft_soap_section, (), {}),
-        ("detect_red_flags()", scenario_detect_red_flags, (SAMPLE_TRANSCRIPT,), {}),
-        ("process_chunk() [orchestrator]", scenario_process_chunk, (SAMPLE_TRANSCRIPT,), {}),
-        ("end_to_end: audio->update", scenario_end_to_end, (audio_bytes,), {}),
+        ("transcribe()", scenario_transcribe, (audio_bytes,), {}, True),
+        ("extract_medications()", scenario_extract_medications, (SAMPLE_MEDICATIONS_TEXT,), {}, False),
+        ("check_interactions()", scenario_check_interactions, (), {}, False),
+        ("build_differential()", scenario_build_differential, (), {}, False),
+        ("draft_soap_section()", scenario_draft_soap_section, (), {}, False),
+        ("detect_red_flags()", scenario_detect_red_flags, (SAMPLE_TRANSCRIPT,), {}, False),
+        ("extract_icd10_codes()", scenario_extract_icd10, (SAMPLE_ASSESSMENT,), {}, False),
+        ("extract_cpt_codes()", scenario_extract_cpt, (SAMPLE_ASSESSMENT,), {}, False),
+        ("extract_follow_ups()", scenario_extract_follow_ups, (SAMPLE_ASSESSMENT,), {}, False),
+        ("generate_patient_summary()", scenario_generate_summary, (), {}, False),
+        ("process_chunk() [orchestrator]", scenario_process_chunk, (SAMPLE_TRANSCRIPT,), {}, False),
+        ("end_to_end: audio->update", scenario_end_to_end, (audio_bytes,), {}, True),
     ]
 
     results: dict[str, dict] = {}
 
-    for name, fn, args, kwargs in scenarios:
-        print(f"Running: {name} ({runs} iterations)...")
-        _, stats = await bench_async(name, fn, args, kwargs, runs)
-        results[name] = stats
-        print(f"  -> p50={stats['p50_ms']:.1f}ms  p95={stats['p95_ms']:.1f}ms  mean={stats['mean_ms']:.1f}ms")
+    for name, fn, args, kwargs, requires_model in scenarios:
+        if requires_model:
+            try:
+                # Probe if transcription model is available
+                print(f"Running: {name} ({runs} iterations)...")
+                _, stats = await bench_async(name, fn, args, kwargs, runs)
+                results[name] = stats
+                print(f"  -> p50={stats['p50_ms']:.1f}ms  p95={stats['p95_ms']:.1f}ms  mean={stats['mean_ms']:.1f}ms")
+            except Exception as exc:
+                print(f"  SKIPPED {name}: {exc}")
+                results[name] = compute_stats([])
+        else:
+            print(f"Running: {name} ({runs} iterations)...")
+            _, stats = await bench_async(name, fn, args, kwargs, runs)
+            results[name] = stats
+            print(f"  -> p50={stats['p50_ms']:.1f}ms  p95={stats['p95_ms']:.1f}ms  mean={stats['mean_ms']:.1f}ms")
 
     # Print summary table
     print_table(results)
@@ -356,8 +431,8 @@ def main() -> None:
     parser.add_argument(
         "--runs",
         type=int,
-        default=10,
-        help="Number of iterations per scenario (default: 10)",
+        default=20,
+        help="Number of iterations per scenario (default: 20)",
     )
     parser.add_argument(
         "--mock-llm",

@@ -16,6 +16,24 @@ LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "30"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return a reusable async HTTP client (lazy singleton)."""
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=LLM_TIMEOUT)
+    return _client
+
+
+async def shutdown() -> None:
+    """Close the HTTP client. Call during application shutdown."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+        _client = None
+
 
 def _build_messages(
     prompt: str, system_prompt: Optional[str] = None
@@ -45,25 +63,25 @@ async def call_medgemma(
         "max_tokens": max_tokens or LLM_MAX_TOKENS,
     }
 
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
-        try:
-            resp = await client.post(
-                f"{LLM_BASE_URL}/chat/completions", json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
-        except httpx.TimeoutException:
-            logger.error("LLM request timed out after %ds", LLM_TIMEOUT)
-            raise
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "LLM returned %d: %s", exc.response.status_code, exc.response.text
-            )
-            raise
-        except (KeyError, IndexError) as exc:
-            logger.error("Unexpected LLM response shape: %s", exc)
-            raise
+    client = _get_client()
+    try:
+        resp = await client.post(
+            f"{LLM_BASE_URL}/chat/completions", json=payload
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+    except httpx.TimeoutException:
+        logger.error("LLM request timed out after %ds", LLM_TIMEOUT)
+        raise
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "LLM returned %d: %s", exc.response.status_code, exc.response.text
+        )
+        raise
+    except (KeyError, IndexError) as exc:
+        logger.error("Unexpected LLM response shape: %s", exc)
+        raise
 
 
 def _extract_json(text: str) -> dict:

@@ -59,6 +59,7 @@ class ClinicalContext:
     )
     alerts: list[dict] = field(default_factory=list)
     chunk_count: int = 0
+    speaker_counts: dict[str, int] = field(default_factory=dict)
 
 
 def _context_from_session(session: Session) -> ClinicalContext:
@@ -92,7 +93,7 @@ def _context_from_session(session: Session) -> ClinicalContext:
         ],
         chunk_count=len(session.transcript_chunks),
     )
-    ctx.speaker_counts = speaker_counts  # type: ignore[attr-defined]
+    ctx.speaker_counts = speaker_counts
     return ctx
 
 

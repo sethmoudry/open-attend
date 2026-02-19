@@ -34,6 +34,10 @@ async def assign_roles(
     prompt = SPEAKER_ROLE_ASSIGNMENT_PROMPT.format(labeled_exchanges=formatted)
     result = await call_medgemma_json(prompt)
 
+    if not isinstance(result.get("assignments"), list):
+        logger.warning("Unexpected role assignment response: %s", result)
+        return {}
+
     assignments: dict[str, dict] = {}
     for entry in result.get("assignments", []):
         sid = entry.get("speaker_id", "")

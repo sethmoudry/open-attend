@@ -44,6 +44,8 @@ from prompts import (
 
 logger = logging.getLogger(__name__)
 
+CONFIDENCE_THRESHOLD = 0.5  # minimum confidence for ICD-10/CPT codes
+
 
 # ---------------------------------------------------------------------------
 # Medication extraction
@@ -321,7 +323,7 @@ async def extract_icd10_codes(assessment: str) -> list[DiagnosisCode]:
     prompt = ICD10_EXTRACTION_PROMPT.format(assessment=assessment)
     try:
         result = await call_medgemma_json(prompt)
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         logger.exception("ICD-10 extraction failed")
         return []
 
@@ -331,7 +333,7 @@ async def extract_icd10_codes(assessment: str) -> list[DiagnosisCode]:
         if not code_val:
             continue
         confidence = float(entry.get("confidence", 0.0))
-        if confidence <= 0.5:
+        if confidence <= CONFIDENCE_THRESHOLD:
             continue
         codes.append(
             DiagnosisCode(
@@ -364,7 +366,7 @@ async def extract_cpt_codes(
     prompt = CPT_EXTRACTION_PROMPT.format(plan=plan, orders=orders_str)
     try:
         result = await call_medgemma_json(prompt)
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         logger.exception("CPT extraction failed")
         return []
 
@@ -374,7 +376,7 @@ async def extract_cpt_codes(
         if not code_val:
             continue
         confidence = float(entry.get("confidence", 0.0))
-        if confidence <= 0.5:
+        if confidence <= CONFIDENCE_THRESHOLD:
             continue
         codes.append(
             DiagnosisCode(
@@ -421,7 +423,7 @@ async def generate_patient_summary(
     )
     try:
         result = await call_medgemma_json(prompt, max_tokens=2048)
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         logger.exception("Patient summary generation failed")
         return PatientSummary()
 
@@ -563,7 +565,7 @@ async def check_lab_alerts(
 
     try:
         result = await call_medgemma_json(prompt)
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         logger.exception("Lab alert check failed")
         return []
 
@@ -604,7 +606,7 @@ async def extract_follow_ups(
     )
     try:
         result = await call_medgemma_json(prompt)
-    except Exception:
+    except (httpx.HTTPError, KeyError, ValueError):
         logger.exception("Follow-up extraction failed")
         return []
 

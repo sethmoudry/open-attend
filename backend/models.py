@@ -137,9 +137,11 @@ class DiagnosisCode(BaseModel):
 
 class SpeakerProfile(BaseModel):
     consistent_id: str  # e.g. "spk_0", "spk_1"
-    role: str  # e.g. "doctor", "patient", "nurse", "parent", "interpreter"
+    role: Optional[str] = None  # e.g. "doctor", "patient", "nurse", "parent", "interpreter"
     confidence: float = 0.0
     reasoning: str = ""
+    embeddings: list[list[float]] = Field(default_factory=list)
+    mean_embedding: Optional[list[float]] = None
 
 
 class SimilarCondition(BaseModel):

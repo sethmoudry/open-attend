@@ -81,7 +81,7 @@ def _load_pipeline():
 
     try:
         _pipeline = Pipeline.from_pretrained(
-            model_name, use_auth_token=hf_token
+            model_name, token=hf_token
         )
         _pipeline.to(torch.device("cpu"))
         logger.info("Diarization model loaded successfully: %s", model_name)
@@ -146,19 +146,57 @@ async def diarize(
         logger.error("Diarization inference failed: %s", exc)
         return [], []
 
-    # Extract segments
+    # Extract segments — pyannote v4 returns DiarizeOutput with .speaker_diarization
+    annotation = getattr(diarization, "speaker_diarization", diarization)
     segments: list[SpeakerSegment] = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
+    for turn, _, speaker in annotation.itertracks(yield_label=True):
         segments.append(
             SpeakerSegment(
                 speaker_id=speaker, start=turn.start, end=turn.end
             )
         )
 
-    # Extract speaker embeddings (best-effort)
-    embeddings = _extract_embeddings(segments, audio_array, sample_rate)
+    # Extract speaker embeddings — prefer pipeline-provided embeddings (v4)
+    raw_embeddings = getattr(diarization, "speaker_embeddings", None)
+    if raw_embeddings is not None:
+        embeddings = _embeddings_from_pipeline(segments, raw_embeddings)
+    else:
+        embeddings = _extract_embeddings(segments, audio_array, sample_rate)
 
     return segments, embeddings
+
+
+def _embeddings_from_pipeline(
+    segments: list[SpeakerSegment],
+    raw_embeddings,
+) -> list[SpeakerEmbedding]:
+    """Build SpeakerEmbedding list from pyannote v4 pipeline-provided embeddings.
+
+    ``raw_embeddings`` is a numpy array of shape (num_speakers, embedding_dim),
+    ordered by speaker label (SPEAKER_00, SPEAKER_01, ...).
+    """
+    embeddings: list[SpeakerEmbedding] = []
+    try:
+        seen: set[str] = set()
+        # Collect unique speakers in order of appearance
+        unique_speakers: list[str] = []
+        for seg in segments:
+            if seg.speaker_id not in seen:
+                seen.add(seg.speaker_id)
+                unique_speakers.append(seg.speaker_id)
+
+        for i, speaker_id in enumerate(sorted(unique_speakers)):
+            if i < len(raw_embeddings):
+                embeddings.append(
+                    SpeakerEmbedding(
+                        speaker_id=speaker_id,
+                        embedding=raw_embeddings[i].flatten().tolist(),
+                    )
+                )
+    except Exception as exc:
+        logger.warning("Failed to extract pipeline embeddings: %s", exc)
+
+    return embeddings
 
 
 def _extract_embeddings(
@@ -176,7 +214,7 @@ def _extract_embeddings(
         hf_token = os.getenv("HF_TOKEN", "")
         embedding_model = Inference(
             os.getenv("SPEAKER_EMBEDDING_MODEL", "pyannote/embedding"),
-            use_auth_token=hf_token or None,
+            token=hf_token or None,
         )
         embedding_model.to(torch.device("cpu"))
 
