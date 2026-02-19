@@ -1,0 +1,66 @@
+{
+  "transcribe()": {
+    "p50_ms": 0,
+    "p95_ms": 0,
+    "mean_ms": 0,
+    "min_ms": 0,
+    "max_ms": 0,
+    "n": 0
+  },
+  "extract_medications()": {
+    "p50_ms": 66.96,
+    "p95_ms": 66.96,
+    "mean_ms": 59.19,
+    "min_ms": 51.42,
+    "max_ms": 66.96,
+    "n": 2
+  },
+  "check_interactions()": {
+    "p50_ms": 58.51,
+    "p95_ms": 58.51,
+    "mean_ms": 54.68,
+    "min_ms": 50.84,
+    "max_ms": 58.51,
+    "n": 2
+  },
+  "build_differential()": {
+    "p50_ms": 55.99,
+    "p95_ms": 55.99,
+    "mean_ms": 53.8,
+    "min_ms": 51.62,
+    "max_ms": 55.99,
+    "n": 2
+  },
+  "draft_soap_section()": {
+    "p50_ms": 57.07,
+    "p95_ms": 57.07,
+    "mean_ms": 54.18,
+    "min_ms": 51.29,
+    "max_ms": 57.07,
+    "n": 2
+  },
+  "detect_red_flags()": {
+    "p50_ms": 57.36,
+    "p95_ms": 57.36,
+    "mean_ms": 54.77,
+    "min_ms": 52.18,
+    "max_ms": 57.36,
+    "n": 2
+  },
+  "process_chunk() [orchestrator]": {
+    "p50_ms": 190.79,
+    "p95_ms": 190.79,
+    "mean_ms": 185.2,
+    "min_ms": 179.61,
+    "max_ms": 190.79,
+    "n": 2
+  },
+  "end_to_end: audio->update": {
+    "p50_ms": 0,
+    "p95_ms": 0,
+    "mean_ms": 0,
+    "min_ms": 0,
+    "max_ms": 0,
+    "n": 0
+  }
+}
