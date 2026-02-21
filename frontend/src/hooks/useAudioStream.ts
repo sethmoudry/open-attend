@@ -22,6 +22,8 @@ export interface UseAudioStreamOptions {
   reconnectDelayMs?: number;
 }
 
+export type ProcessingStatus = 'processing' | 'ready' | null;
+
 export interface UseAudioStreamReturn {
   /** Whether WebSocket is connected */
   connected: boolean;
@@ -29,6 +31,8 @@ export interface UseAudioStreamReturn {
   transcriptChunks: TranscriptChunk[];
   /** Current error, if any */
   error: string | null;
+  /** Backend processing status (processing / ready / null) */
+  processingStatus: ProcessingStatus;
   /** Send an audio blob over the socket */
   sendAudioChunk: (blob: Blob) => void;
   /** Manually connect */
@@ -42,7 +46,7 @@ export interface UseAudioStreamReturn {
 export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamReturn {
   const {
     sessionId,
-    wsBaseUrl = 'ws://localhost:8080',
+    wsBaseUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`,
     autoConnect = true,
     maxReconnectAttempts = 5,
     reconnectDelayMs = 1000,
@@ -51,6 +55,7 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
   const [connected, setConnected] = useState(false);
   const [transcriptChunks, setTranscriptChunks] = useState<TranscriptChunk[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -87,8 +92,27 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data as string) as TranscriptChunk;
-          setTranscriptChunks((prev) => [...prev, data]);
+          const data = JSON.parse(event.data as string);
+
+          // Discriminate status messages from transcript chunks
+          if (data.type === 'status') {
+            setProcessingStatus(data.message as ProcessingStatus);
+            return;
+          }
+
+          // Treat everything else as a transcript chunk
+          const chunk = data as TranscriptChunk;
+          // Upsert by ID: if same ID exists, update in place (live preview);
+          // otherwise append (new speaker turn).
+          setTranscriptChunks((prev) => {
+            const idx = prev.findIndex((c) => c.id === chunk.id);
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = chunk;
+              return updated;
+            }
+            return [...prev, chunk];
+          });
         } catch {
           // Ignore non-JSON messages
         }
@@ -164,6 +188,7 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
     connected,
     transcriptChunks,
     error,
+    processingStatus,
     sendAudioChunk,
     connect,
     disconnect,

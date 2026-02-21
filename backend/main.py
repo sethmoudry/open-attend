@@ -229,6 +229,28 @@ app.add_middleware(
 )
 
 
+# ---------- /api prefix stripping (production static serving) ----------
+
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+
+class StripApiPrefix:
+    """Strip /api prefix so the frontend's /api/session hits /session."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] in ("http", "websocket"):
+            path: str = scope.get("path", "")
+            if path.startswith("/api/") or path == "/api":
+                scope = dict(scope, path=path[4:] or "/")
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(StripApiPrefix)
+
+
 # ---------- REST endpoints ----------
 
 
@@ -244,6 +266,42 @@ class SessionSummary(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/throttle-status")
+async def throttle_status():
+    """Return seconds until each tool throttle is next due."""
+    from orchestrator import _alert_throttle, _med_throttle, _diff_throttle
+
+    return {
+        "alerts": {"seconds_until_due": round(_alert_throttle.seconds_until_due(), 1)},
+        "medications": {"seconds_until_due": round(_med_throttle.seconds_until_due(), 1)},
+        "differential": {"seconds_until_due": round(_diff_throttle.seconds_until_due(), 1)},
+    }
+
+
+@app.post("/session/{session_id}/force-update")
+async def force_update(session_id: str):
+    """Reset all throttles and re-run the orchestrator on the last transcript chunk."""
+    session = await store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not session.transcript_chunks:
+        raise HTTPException(status_code=400, detail="No transcript chunks yet")
+
+    from orchestrator import _alert_throttle, _med_throttle, _diff_throttle, process_chunk
+
+    _alert_throttle.reset()
+    _med_throttle.reset()
+    _diff_throttle.reset()
+
+    last_chunk = session.transcript_chunks[-1]
+    updates = await process_chunk(last_chunk, session)
+    updates.pop("transcript_chunks", None)
+    if updates:
+        await store.update_session(session_id, updates)
+
+    return {"status": "ok", "updated_keys": list(updates.keys())}
 
 
 @app.get("/sessions", response_model=List[SessionSummary])
@@ -325,7 +383,7 @@ async def finalize_session(session_id: str):
     return updated
 
 
-@app.post("/session/{session_id}/end-visit", response_model=Session)
+@app.post("/session/{session_id}/end-visit")
 async def end_visit(session_id: str):
     session = await store.get_session(session_id)
     if session is None:
@@ -335,7 +393,20 @@ async def end_visit(session_id: str):
     updated = await store.update_session(
         session_id, {"mode": SessionMode.POST_VISIT}
     )
-    return updated
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update session")
+    from llm import get_usage_stats
+    return {
+        "session": updated.model_dump(mode="json"),
+        "llm_usage": get_usage_stats(),
+    }
+
+
+@app.get("/llm-usage")
+async def llm_usage():
+    """Return cumulative LLM token usage and estimated cost."""
+    from llm import get_usage_stats
+    return get_usage_stats()
 
 
 @app.patch("/session/{session_id}/soap", response_model=Session)
@@ -745,7 +816,65 @@ async def post_feedback(req: FeedbackRequest):
 # ---------- Sample audio ----------
 
 SAMPLE_WAV = Path(__file__).parent / "static" / "sample_conversation.wav"
-SAMPLE_CHUNK_SECONDS = 3
+
+# VAD-based chunk boundaries (computed once, cached)
+_sample_vad_boundaries: list[tuple[float, float]] | None = None
+
+
+def _compute_vad_boundaries() -> list[tuple[float, float]]:
+    """Split sample WAV at silence gaps, mirroring frontend VAD behaviour."""
+    global _sample_vad_boundaries
+    if _sample_vad_boundaries is not None:
+        return _sample_vad_boundaries
+
+    import numpy as np
+    import soundfile as sf
+
+    audio, sr = sf.read(str(SAMPLE_WAV), dtype="float32")
+
+    silence_threshold = 0.01
+    silence_duration_s = 1.0
+    min_chunk_s = 2.5
+    max_chunk_s = 20.0
+    frame_ms = 30
+    frame_len = int(sr * frame_ms / 1000)
+
+    chunks: list[tuple[float, float]] = []
+    chunk_start = 0
+    has_speech = False
+    silence_start: float | None = None
+
+    for i in range(0, len(audio), frame_len):
+        frame = audio[i : i + frame_len]
+        rms = float(np.sqrt(np.mean(frame**2)))
+        t = i / sr
+
+        if rms > silence_threshold:
+            has_speech = True
+            silence_start = None
+        else:
+            if silence_start is None:
+                silence_start = t
+            if has_speech and silence_start is not None:
+                silence_dur = t - silence_start
+                chunk_dur = (i - chunk_start) / sr
+                if silence_dur >= silence_duration_s and chunk_dur >= min_chunk_s:
+                    chunks.append((chunk_start / sr, silence_start))
+                    chunk_start = int(silence_start * sr)
+                    has_speech = False
+                    silence_start = None
+
+        if (i - chunk_start) / sr >= max_chunk_s and has_speech:
+            chunks.append((chunk_start / sr, i / sr))
+            chunk_start = i
+            has_speech = False
+            silence_start = None
+
+    if has_speech:
+        chunks.append((chunk_start / sr, len(audio) / sr))
+
+    _sample_vad_boundaries = chunks
+    return chunks
 
 
 @app.get("/sample-audio/info")
@@ -753,15 +882,15 @@ async def sample_audio_info():
     """Return metadata about the sample conversation audio."""
     if not SAMPLE_WAV.exists():
         raise HTTPException(status_code=404, detail="Sample audio not found")
-    import wave
 
-    with wave.open(str(SAMPLE_WAV), "rb") as w:
-        frames = w.getnframes()
-        rate = w.getframerate()
-        duration = frames / rate
-        chunk_size = rate * SAMPLE_CHUNK_SECONDS * w.getsampwidth()
-        total_chunks = (frames * w.getsampwidth() + chunk_size - 1) // chunk_size
-    return {"duration": duration, "chunk_seconds": SAMPLE_CHUNK_SECONDS, "total_chunks": total_chunks}
+    boundaries = await asyncio.to_thread(_compute_vad_boundaries)
+    total_dur = boundaries[-1][1] if boundaries else 0.0
+    chunk_durations = [end - start for start, end in boundaries]
+    return {
+        "duration": total_dur,
+        "chunk_seconds": chunk_durations,
+        "total_chunks": len(boundaries),
+    }
 
 
 @app.get("/sample-audio/full")
@@ -774,32 +903,23 @@ async def sample_audio_full():
 
 @app.get("/sample-audio/chunk/{index}")
 async def sample_audio_chunk(index: int):
-    """Return the Nth 5-second chunk of sample audio as WAV bytes."""
+    """Return a VAD-segmented chunk of sample audio as WAV bytes."""
     if not SAMPLE_WAV.exists():
         raise HTTPException(status_code=404, detail="Sample audio not found")
-    import wave
+
+    boundaries = await asyncio.to_thread(_compute_vad_boundaries)
+    if index < 0 or index >= len(boundaries):
+        raise HTTPException(status_code=404, detail="Chunk index out of range")
+
     import io
+    import soundfile as sf
 
-    with wave.open(str(SAMPLE_WAV), "rb") as w:
-        rate = w.getframerate()
-        sampwidth = w.getsampwidth()
-        nchannels = w.getnchannels()
-        total_frames = w.getnframes()
-        frames_per_chunk = rate * SAMPLE_CHUNK_SECONDS
-        start_frame = index * frames_per_chunk
-        if start_frame >= total_frames:
-            raise HTTPException(status_code=404, detail="Chunk index out of range")
-        w.setpos(start_frame)
-        read_frames = min(frames_per_chunk, total_frames - start_frame)
-        raw = w.readframes(read_frames)
+    start_s, end_s = boundaries[index]
+    audio, sr = sf.read(str(SAMPLE_WAV), dtype="float32")
+    chunk_audio = audio[int(start_s * sr) : int(end_s * sr)]
 
-    # Wrap in a proper WAV container
     buf = io.BytesIO()
-    with wave.open(buf, "wb") as out:
-        out.setnchannels(nchannels)
-        out.setsampwidth(sampwidth)
-        out.setframerate(rate)
-        out.writeframes(raw)
+    sf.write(buf, chunk_audio, sr, format="WAV", subtype="PCM_16")
     return Response(content=buf.getvalue(), media_type="audio/wav")
 
 

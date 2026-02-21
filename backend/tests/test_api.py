@@ -111,7 +111,9 @@ class TestSOAPEndpoints:
 
         end_resp = await client.post(f"/session/{session_id}/end-visit")
         assert end_resp.status_code == 200
-        assert end_resp.json()["mode"] == "post_visit"
+        data = end_resp.json()
+        assert data["session"]["mode"] == "post_visit"
+        assert "llm_usage" in data
 
     @pytest.mark.asyncio
     async def test_end_visit_already_ended(self, client):

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { listSessions } from "../api";
+import { listSessions, deleteSession } from "../api";
 import type { SessionSummary } from "../types";
 
 const MODE_BADGE: Record<string, { label: string; color: string }> = {
@@ -37,6 +37,16 @@ export default function DashboardPage() {
       .catch((err) => console.error("Failed to load sessions:", err))
       .finally(() => setLoading(false));
   }, []);
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Delete this session? This cannot be undone.")) return;
+    try {
+      await deleteSession(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+    }
+  };
 
   const activeSessions = sessions.filter((s) => s.mode === "active_visit");
   const completedSessions = sessions.filter((s) => s.mode === "post_visit");
@@ -103,7 +113,7 @@ export default function DashboardPage() {
                 </h2>
                 <div className="grid gap-3">
                   {activeSessions.map((s) => (
-                    <SessionCard key={s.id} session={s} onClick={() => navigate(`/session/${s.id}`)} />
+                    <SessionCard key={s.id} session={s} onClick={() => navigate(`/session/${s.id}`)} onDelete={() => handleDelete(s.id)} />
                   ))}
                 </div>
               </section>
@@ -117,7 +127,7 @@ export default function DashboardPage() {
                 </h2>
                 <div className="grid gap-3">
                   {completedSessions.map((s) => (
-                    <SessionCard key={s.id} session={s} onClick={() => navigate(`/session/${s.id}/review`)} />
+                    <SessionCard key={s.id} session={s} onClick={() => navigate(`/session/${s.id}/review`)} onDelete={() => handleDelete(s.id)} />
                   ))}
                 </div>
               </section>
@@ -129,7 +139,7 @@ export default function DashboardPage() {
   );
 }
 
-function SessionCard({ session, onClick }: { session: SessionSummary; onClick: () => void }) {
+function SessionCard({ session, onClick, onDelete }: { session: SessionSummary; onClick: () => void; onDelete: () => void }) {
   const badge = MODE_BADGE[session.mode] ?? { label: session.mode, color: "bg-slate-100 text-slate-600" };
   const name = session.patient_context?.name || "Unknown Patient";
   const age = session.patient_context?.age;
@@ -137,9 +147,12 @@ function SessionCard({ session, onClick }: { session: SessionSummary; onClick: (
   const visitLabel = VISIT_LABELS[session.visit_type] ?? session.visit_type;
 
   return (
-    <button
+    <div
       onClick={onClick}
-      className="flex w-full items-center gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 text-left shadow-sm transition-all hover:border-clinical-300 hover:shadow-md"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }}
+      className="group flex w-full cursor-pointer items-center gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 text-left shadow-sm transition-all hover:border-clinical-300 hover:shadow-md"
     >
       {/* Avatar */}
       <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-clinical-100 text-sm font-bold text-clinical-700">
@@ -171,10 +184,21 @@ function SessionCard({ session, onClick }: { session: SessionSummary; onClick: (
         </span>
       </div>
 
+      {/* Delete */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onDelete(); }}
+        title="Delete session"
+        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-slate-300 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+      >
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+        </svg>
+      </button>
+
       {/* Arrow */}
       <svg className="h-4 w-4 flex-shrink-0 text-slate-300" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
       </svg>
-    </button>
+    </div>
   );
 }

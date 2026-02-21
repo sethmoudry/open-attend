@@ -56,8 +56,23 @@ export async function getSession(id: string): Promise<Session> {
   return request<Session>(`/session/${id}`);
 }
 
-export async function endVisit(id: string): Promise<Session> {
-  return request<Session>(`/session/${id}/end-visit`, {
+export interface LlmUsage {
+  total_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+  model: string;
+  provider: string;
+}
+
+export interface EndVisitResponse {
+  session: Session;
+  llm_usage: LlmUsage;
+}
+
+export async function endVisit(id: string): Promise<EndVisitResponse> {
+  return request<EndVisitResponse>(`/session/${id}/end-visit`, {
     method: "POST",
   });
 }
@@ -247,7 +262,7 @@ export async function submitFeedback(
 
 export interface SampleAudioInfo {
   duration: number;
-  chunk_seconds: number;
+  chunk_seconds: number[];  // per-chunk durations from VAD
   total_chunks: number;
 }
 
@@ -273,10 +288,45 @@ export async function getSampleAudioChunk(index: number): Promise<Blob> {
   return res.blob();
 }
 
+// ── Throttle status & force update ──
+
+export interface ThrottleStatus {
+  alerts: { seconds_until_due: number };
+  medications: { seconds_until_due: number };
+  differential: { seconds_until_due: number };
+}
+
+export async function getThrottleStatus(): Promise<ThrottleStatus> {
+  return request<ThrottleStatus>("/throttle-status");
+}
+
+export async function forceUpdate(sessionId: string): Promise<void> {
+  await request<{ status: string; updated_keys: string[] }>(
+    `/session/${sessionId}/force-update`,
+    { method: "POST" },
+  );
+}
+
+// ── Delete session ──
+
+export async function deleteSession(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/session/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "Unknown error");
+    throw new ApiError(res.status, `${res.status}: ${body}`);
+  }
+}
+
 // ── Sessions list ──
 
 export async function listSessions(): Promise<SessionSummary[]> {
   return request<SessionSummary[]>("/sessions");
+}
+
+// ── LLM usage ──
+
+export async function getLlmUsage(): Promise<LlmUsage> {
+  return request<LlmUsage>("/llm-usage");
 }
 
 // ── Health check ──

@@ -3,12 +3,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export type RecordingState = 'idle' | 'recording' | 'paused';
 
 export interface UseAudioCaptureOptions {
-  /** Called with each audio chunk blob (every ~5s) */
+  /** Called with each audio chunk blob (on speech pause or max duration) */
   onChunk?: (blob: Blob) => void;
   /** Called on error (permission denied, mic disconnect, etc.) */
   onError?: (error: Error) => void;
-  /** Chunk interval in ms (default 5000) */
-  chunkIntervalMs?: number;
+  /** Silence threshold (RMS 0-1) below which audio is considered silence (default 0.03) */
+  silenceThreshold?: number;
+  /** How long silence must last before triggering a chunk send, in ms (default 600) */
+  silenceDurationMs?: number;
+  /** Maximum chunk duration before force-flushing, in ms (default 20000) */
+  maxChunkMs?: number;
+  /** Minimum chunk duration — ignore pauses shorter than this, in ms (default 1500) */
+  minChunkMs?: number;
 }
 
 export interface UseAudioCaptureReturn {
@@ -23,7 +29,14 @@ export interface UseAudioCaptureReturn {
 }
 
 export function useAudioCapture(options: UseAudioCaptureOptions = {}): UseAudioCaptureReturn {
-  const { onChunk, onError, chunkIntervalMs = 5000 } = options;
+  const {
+    onChunk,
+    onError,
+    silenceThreshold = 0.03,
+    silenceDurationMs = 600,
+    maxChunkMs = 20000,
+    minChunkMs = 1500,
+  } = options;
 
   const [state, setState] = useState<RecordingState>('idle');
   const [audioLevel, setAudioLevel] = useState(0);
@@ -39,13 +52,76 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}): UseAudioC
   const startTimeRef = useRef<number>(0);
   const pausedElapsedRef = useRef<number>(0);
 
+  // VAD state refs
+  const silenceStartRef = useRef<number | null>(null);
+  const chunkStartTimeRef = useRef<number>(0);
+  const hasSpeechRef = useRef(false);
+  const isFlushingRef = useRef(false);
+  const mimeTypeRef = useRef('');
+
   // Stable refs for callbacks so MediaRecorder handlers don't go stale
   const onChunkRef = useRef(onChunk);
   onChunkRef.current = onChunk;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
-  // ---- Audio level metering via AnalyserNode ----
+  // ---- Restart recorder after flush ----
+  const startNewRecorder = useCallback(() => {
+    const stream = streamRef.current;
+    if (!stream || stream.getAudioTracks().every(t => !t.enabled || t.readyState === 'ended')) {
+      return;
+    }
+
+    const recorder = new MediaRecorder(stream, {
+      ...(mimeTypeRef.current ? { mimeType: mimeTypeRef.current } : {}),
+      audioBitsPerSecond: 64000,
+    });
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0 && hasSpeechRef.current) {
+        onChunkRef.current?.(e.data);
+        setChunkCount((c) => c + 1);
+      }
+      // Reset after sending
+      hasSpeechRef.current = false;
+      isFlushingRef.current = false;
+    };
+
+    recorder.onerror = () => {
+      onErrorRef.current?.(new Error('MediaRecorder error'));
+    };
+
+    recorder.onstop = () => {
+      // After stop, start a fresh recorder if still recording
+      if (streamRef.current && !isFlushingRef.current) {
+        // ondataavailable already fired by now
+      }
+    };
+
+    mediaRecorderRef.current = recorder;
+    chunkStartTimeRef.current = Date.now();
+    silenceStartRef.current = null;
+    recorder.start(); // No timeslice — we control flushing via stop/start
+  }, []);
+
+  // ---- Flush current recorder and restart ----
+  const flushAndRestart = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      return;
+    }
+    isFlushingRef.current = true;
+
+    // When we stop, ondataavailable fires with the accumulated audio
+    recorder.stop();
+
+    // Start a new recorder after a tiny delay to let stop() complete
+    setTimeout(() => {
+      startNewRecorder();
+    }, 50);
+  }, [startNewRecorder]);
+
+  // ---- Audio level metering + VAD via AnalyserNode ----
   const startLevelMetering = useCallback((stream: MediaStream) => {
     try {
       const ctx = new AudioContext();
@@ -69,13 +145,48 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}): UseAudioC
         }
         const rms = Math.sqrt(sum / dataArray.length) / 255;
         setAudioLevel(rms);
+
+        // ---- VAD: detect silence gaps ----
+        const now = Date.now();
+        const chunkAge = now - chunkStartTimeRef.current;
+        const recorder = mediaRecorderRef.current;
+
+        if (recorder && recorder.state === 'recording' && !isFlushingRef.current) {
+          if (rms > silenceThreshold) {
+            // Speech detected
+            hasSpeechRef.current = true;
+            silenceStartRef.current = null;
+          } else {
+            // Silence
+            if (silenceStartRef.current === null) {
+              silenceStartRef.current = now;
+            }
+
+            const silenceDuration = now - silenceStartRef.current;
+
+            // Flush if: silence long enough AND we have speech AND chunk is old enough
+            if (
+              hasSpeechRef.current &&
+              silenceDuration >= silenceDurationMs &&
+              chunkAge >= minChunkMs
+            ) {
+              flushAndRestart();
+            }
+          }
+
+          // Safety valve: force flush if chunk is too long
+          if (hasSpeechRef.current && chunkAge >= maxChunkMs) {
+            flushAndRestart();
+          }
+        }
+
         animFrameRef.current = requestAnimationFrame(tick);
       };
       tick();
     } catch {
       // Non-critical — metering just won't work
     }
-  }, []);
+  }, [silenceThreshold, silenceDurationMs, maxChunkMs, minChunkMs, flushAndRestart]);
 
   const stopLevelMetering = useCallback(() => {
     if (animFrameRef.current !== null) {
@@ -127,32 +238,20 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}): UseAudioC
       });
 
       // Prefer webm/opus, fall back to whatever the browser supports
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      mimeTypeRef.current = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
           ? 'audio/webm'
           : '';
 
-      const recorder = new MediaRecorder(stream, {
-        ...(mimeType ? { mimeType } : {}),
-        audioBitsPerSecond: 64000,
-      });
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          onChunkRef.current?.(e.data);
-          setChunkCount((c) => c + 1);
-        }
-      };
-
-      recorder.onerror = () => {
-        onErrorRef.current?.(new Error('MediaRecorder error'));
-      };
-
-      mediaRecorderRef.current = recorder;
-      recorder.start(chunkIntervalMs);
+      // Reset VAD state
+      hasSpeechRef.current = false;
+      silenceStartRef.current = null;
+      isFlushingRef.current = false;
 
       startLevelMetering(stream);
+      startNewRecorder();
+
       pausedElapsedRef.current = 0;
       setElapsedTime(0);
       setChunkCount(0);
@@ -167,7 +266,7 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}): UseAudioC
             : new Error('Failed to start recording');
       onErrorRef.current?.(error);
     }
-  }, [chunkIntervalMs, startLevelMetering, startTimer]);
+  }, [startLevelMetering, startNewRecorder, startTimer]);
 
   const pauseRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -191,6 +290,8 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}): UseAudioC
   const stopRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
+      // Final flush — send whatever's accumulated
+      hasSpeechRef.current = true; // ensure it sends
       recorder.stop();
     }
     mediaRecorderRef.current = null;

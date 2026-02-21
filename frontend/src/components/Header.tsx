@@ -39,7 +39,7 @@ export default function Header({
     <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
       {/* Left: Logo */}
       <div className="flex items-center gap-3">
-        <Link to="/" className="flex items-center gap-2">
+        <Link to="/dashboard" className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-clinical-600">
             <svg
               className="h-4 w-4 text-white"

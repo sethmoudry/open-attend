@@ -53,8 +53,8 @@ class SpeakerRegistry:
     Falls back to sequential ID assignment when no embeddings are available.
     """
 
-    SIMILARITY_THRESHOLD = 0.75
-    MAX_SPEAKERS = 8
+    SIMILARITY_THRESHOLD = 0.65
+    MAX_SPEAKERS = 6
 
     def __init__(self) -> None:
         self.profiles: list[SpeakerProfile] = []
@@ -137,6 +137,33 @@ class SpeakerRegistry:
             registry._next_id = max_idx + 1
         return registry
 
+    def merge_by_role(self) -> dict[str, str]:
+        """Merge profiles that share the same role into a single profile.
+
+        Returns a mapping of {old_id: merged_id} for all merged profiles.
+        """
+        with self._lock:
+            role_groups: dict[str, list[SpeakerProfile]] = {}
+            for p in self.profiles:
+                if p.role:
+                    role_groups.setdefault(p.role, []).append(p)
+
+            id_map: dict[str, str] = {}
+            for role, profiles in role_groups.items():
+                if len(profiles) <= 1:
+                    continue
+                # Keep the profile with the most embeddings as the primary
+                profiles.sort(key=lambda p: len(p.embeddings), reverse=True)
+                primary = profiles[0]
+                for secondary in profiles[1:]:
+                    # Absorb embeddings
+                    primary.embeddings.extend(secondary.embeddings)
+                    id_map[secondary.consistent_id] = primary.consistent_id
+                    self.profiles.remove(secondary)
+                primary.update_mean()
+
+            return id_map
+
     # -- internals --
 
     def _match_speakers_locked(
@@ -144,10 +171,16 @@ class SpeakerRegistry:
         chunk_speaker_ids: list[str],
         chunk_embeddings: list[dict],
     ) -> dict[str, str]:
-        # Build a lookup: raw_id -> embedding (may be None)
+        # Build a lookup: raw_id -> embedding (may be None or contain NaN)
         emb_lookup: dict[str, Optional[list[float]]] = {}
         for entry in chunk_embeddings:
-            emb_lookup[entry["speaker_id"]] = entry.get("embedding")
+            emb = entry.get("embedding")
+            # Treat NaN/Inf embeddings as None (unusable for matching)
+            if emb is not None:
+                import math
+                if any(math.isnan(v) or math.isinf(v) for v in emb):
+                    emb = None
+            emb_lookup[entry["speaker_id"]] = emb
 
         # Deduplicate while preserving order
         seen: set[str] = set()
@@ -186,7 +219,20 @@ class SpeakerRegistry:
                     claimed.add(best_profile.consistent_id)
                     continue
 
-            # No embedding or no match above threshold -- create new profile
+            # No embedding or no match above threshold
+            # If no embedding and we already have profiles, assign to the
+            # least-recently-used unclaimed profile instead of creating a new one
+            if embedding is None and self.profiles:
+                for profile in self.profiles:
+                    if profile.consistent_id not in claimed:
+                        mapping[raw_id] = profile.consistent_id
+                        claimed.add(profile.consistent_id)
+                        break
+                else:
+                    mapping[raw_id] = self.profiles[-1].consistent_id
+                continue
+
+            # Create new profile if under cap
             if len(self.profiles) >= self.MAX_SPEAKERS:
                 # Cap reached: assign to closest existing profile regardless,
                 # or the last one if no embeddings to compare

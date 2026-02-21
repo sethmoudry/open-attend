@@ -7,6 +7,7 @@ merges results back into the Session.
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -36,6 +37,84 @@ from tools import (
 logger = logging.getLogger(__name__)
 
 SOAP_REFRESH_INTERVAL = 3  # refresh SOAP draft every N chunks
+
+
+def _fib_intervals(start: float) -> list[float]:
+    """Generate Fibonacci-increasing intervals starting from *start* seconds.
+
+    Returns [start, start, 2*start, 3*start, 5*start, 8*start, ...] (20 items).
+    """
+    fibs = [1, 1]
+    for _ in range(18):
+        fibs.append(fibs[-1] + fibs[-2])
+    return [start * f for f in fibs]
+
+
+# Per-tool throttle schedules (Fibonacci-increasing intervals in seconds)
+_ALERT_INTERVALS = _fib_intervals(30.0)       # 30, 30, 60, 90, 150, ...
+_MED_INTERVALS = _fib_intervals(30.0)         # 30, 30, 60, 90, 150, ...
+_DIFF_INTERVALS = _fib_intervals(60.0)        # 60, 60, 120, 180, 300, ...
+
+
+class _ToolThrottle:
+    """Track per-tool call count and enforce Fibonacci-increasing cooldowns."""
+
+    def __init__(self, intervals: list[float]) -> None:
+        self._intervals = intervals
+        self._call_count = 0
+        self._last_time = 0.0
+
+    def is_due(self) -> bool:
+        now = time.monotonic()
+        idx = min(self._call_count, len(self._intervals) - 1)
+        interval = self._intervals[idx]
+        return (now - self._last_time) >= interval
+
+    def record_call(self) -> None:
+        self._call_count += 1
+        self._last_time = time.monotonic()
+
+    def seconds_until_due(self) -> float:
+        """Return seconds until this tool is next due. 0 means ready now."""
+        if self._last_time == 0.0:
+            return 0.0
+        now = time.monotonic()
+        idx = min(self._call_count, len(self._intervals) - 1)
+        interval = self._intervals[idx]
+        remaining = interval - (now - self._last_time)
+        return max(0.0, remaining)
+
+    def reset(self) -> None:
+        """Reset throttle so next call is immediately due."""
+        self._last_time = 0.0
+
+
+_alert_throttle = _ToolThrottle(_ALERT_INTERVALS)
+_med_throttle = _ToolThrottle(_MED_INTERVALS)
+_diff_throttle = _ToolThrottle(_DIFF_INTERVALS)
+
+
+def _dedup_list(items: list) -> list:
+    """Remove duplicate strings/values while preserving order."""
+    seen: set = set()
+    result = []
+    for item in items:
+        key = str(item)
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+
+def _dedup_alerts(existing: list, new_alerts: list) -> list:
+    """Merge new alerts into existing, deduplicating by message."""
+    existing_msgs = {a.message if hasattr(a, "message") else str(a) for a in existing}
+    for alert in new_alerts:
+        msg = alert.message if hasattr(alert, "message") else str(alert)
+        if msg not in existing_msgs:
+            existing.append(alert)
+            existing_msgs.add(msg)
+    return existing
 
 
 @dataclass
@@ -191,38 +270,42 @@ async def process_chunk(
             med_source = "prescribed"
         else:
             med_source = "transcript"
-    tasks["medications"] = asyncio.create_task(
-        extract_medications(chunk.text, chunk_id=chunk.id, source=med_source)
-    )
-
-    # D4: Red flags — run if classification hinted at them OR always (cheap)
-    tasks["red_flags"] = asyncio.create_task(
-        detect_red_flags(
-            chunk.text,
-            symptoms=ctx.symptoms,
-            chunk_id=chunk.id,
+    # D3: Medications — throttled (30s Fibonacci-increasing)
+    if _med_throttle.is_due():
+        tasks["medications"] = asyncio.create_task(
+            extract_medications(chunk.text, chunk_id=chunk.id, source=med_source)
         )
-    )
+        _med_throttle.record_call()
 
-    # D5: Mental health — run if signals detected in classification
-    if raw_mh_signals:
+    # D4: Red flags / alerts — throttled (30s Fibonacci-increasing)
+    if _alert_throttle.is_due():
+        tasks["red_flags"] = asyncio.create_task(
+            detect_red_flags(
+                chunk.text,
+                symptoms=ctx.symptoms,
+                chunk_id=chunk.id,
+            )
+        )
+        _alert_throttle.record_call()
+
+    # D5: Mental health — shares alert throttle
+    if raw_mh_signals and "red_flags" in tasks:
         tasks["mental_health"] = asyncio.create_task(
             detect_mental_health_signals(chunk.text, chunk_id=chunk.id)
         )
 
-    # D6: Orders — run if classification found orders
+    # D6: Orders — run if classification found orders (no throttle, rare)
     raw_orders = classification.get("orders", [])
     if raw_orders:
         tasks["orders"] = asyncio.create_task(extract_orders(chunk.text))
 
-    # D8: Differential — update if new symptoms appeared
-    if new_symptoms:
-        all_symptoms = list(
-            {s for s in ctx.symptoms}
-        )  # deduplicate
+    # D8: Differential — throttled (60s Fibonacci-increasing)
+    if new_symptoms and _diff_throttle.is_due():
+        all_symptoms = list({s for s in ctx.symptoms})
         tasks["differential"] = asyncio.create_task(
             build_differential(all_symptoms, ctx.family_history)
         )
+        _diff_throttle.record_call()
 
     # Await all dispatched tasks
     results: dict[str, Any] = {}
@@ -381,8 +464,8 @@ async def process_chunk(
     updates: dict[str, Any] = {
         "transcript_chunks": session.transcript_chunks + [chunk],
         "medications": all_session_meds,
-        "interaction_flags": list(session.interaction_flags) + interaction_flags,
-        "clinical_alerts": list(session.clinical_alerts) + new_alerts,
+        "interaction_flags": _dedup_list(list(session.interaction_flags) + interaction_flags),
+        "clinical_alerts": _dedup_alerts(list(session.clinical_alerts), new_alerts),
         "soap_note": soap_note,
         "differential": results.get("differential", list(session.differential)),
         "pending_orders": pending_orders,
@@ -396,8 +479,10 @@ async def process_chunk(
         if c.speaker_id and c.text
     ]
 
-    current_role_map = {
-        sp.consistent_id: sp.role for sp in session.speaker_profiles
+    current_role_map: dict[str, str] = {
+        sp.consistent_id: sp.role
+        for sp in session.speaker_profiles
+        if sp.role is not None
     }
     current_speaker_ids = [
         c.speaker_id for c in all_chunks if c.speaker_id

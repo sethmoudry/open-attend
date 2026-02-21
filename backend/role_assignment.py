@@ -7,7 +7,7 @@ from prompts import SPEAKER_ROLE_ASSIGNMENT_PROMPT
 
 logger = logging.getLogger(__name__)
 
-ROLE_ASSIGNMENT_THRESHOLD = 5  # minimum exchanges before attempting assignment
+ROLE_ASSIGNMENT_THRESHOLD = 3  # minimum exchanges before attempting assignment
 
 
 async def assign_roles(

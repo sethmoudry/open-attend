@@ -8,6 +8,7 @@ import PendingOrdersSection from "./PendingOrdersSection";
 import ImageUploadSection from "./ImageUploadSection";
 import LabUploadSection from "./LabUploadSection";
 import LabResultsSection from "./LabResultsSection";
+import UpdateStatusBar from "./UpdateStatusBar";
 import type { LabReport } from "../../types";
 
 interface AgentSidebarProps {
@@ -77,6 +78,14 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
 
   return (
     <div className="space-y-4 p-4">
+      {sessionId && (
+        <UpdateStatusBar
+          sessionId={sessionId}
+          onUpdated={() => {
+            /* polling handles it */
+          }}
+        />
+      )}
       <AlertsSection
         alerts={alerts}
         collapsed={collapsed.alerts}

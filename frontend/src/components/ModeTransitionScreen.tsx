@@ -1,8 +1,16 @@
 import { useEffect, useState } from "react";
 
+interface LlmUsage {
+  total_calls: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+  model: string;
+}
+
 interface ModeTransitionScreenProps {
   isVisible: boolean;
   onComplete: () => void;
+  llmUsage?: LlmUsage | null;
 }
 
 interface StepState {
@@ -22,6 +30,7 @@ const STEP_DURATION = 1200;
 export default function ModeTransitionScreen({
   isVisible,
   onComplete,
+  llmUsage,
 }: ModeTransitionScreenProps) {
   const [steps, setSteps] = useState<StepState[]>(
     STEP_LABELS.map((label) => ({ label, status: "pending" })),
@@ -169,6 +178,17 @@ export default function ModeTransitionScreen({
             }}
           />
         </div>
+
+        {/* LLM Usage Stats */}
+        {llmUsage && (
+          <div className="mt-6 rounded-lg bg-white/5 px-4 py-3">
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>{llmUsage.total_calls} LLM calls</span>
+              <span>{llmUsage.total_tokens.toLocaleString()} tokens</span>
+              <span>${llmUsage.estimated_cost_usd.toFixed(4)}</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

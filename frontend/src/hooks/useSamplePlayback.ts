@@ -3,6 +3,9 @@ import { getSampleAudioChunk, getSampleAudioFull, getSampleAudioInfo } from "../
 
 export interface UseSamplePlaybackOptions {
   sendAudioChunk: (blob: Blob) => void;
+  disconnectStream?: () => void;
+  connectStream?: () => void;
+  clearTranscript?: () => void;
 }
 
 export interface UseSamplePlaybackReturn {
@@ -24,6 +27,7 @@ export function useSamplePlayback(
   const [totalChunks, setTotalChunks] = useState(0);
 
   const abortRef = useRef(false);
+  const abortResolveRef = useRef<(() => void) | null>(null);
   const sendRef = useRef(sendAudioChunk);
   sendRef.current = sendAudioChunk;
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -31,6 +35,11 @@ export function useSamplePlayback(
 
   const stopSample = useCallback(() => {
     abortRef.current = true;
+    // Wake up any pending sleep so the loop exits immediately
+    if (abortResolveRef.current) {
+      abortResolveRef.current();
+      abortResolveRef.current = null;
+    }
     if (sourceRef.current) {
       try { sourceRef.current.stop(); } catch { /* already stopped */ }
       sourceRef.current = null;
@@ -40,6 +49,9 @@ export function useSamplePlayback(
       audioCtxRef.current = null;
     }
     setPlaying(false);
+    options.clearTranscript?.();
+    options.disconnectStream?.();
+    setTimeout(() => options.connectStream?.(), 500);
   }, []);
 
   const startSample = useCallback(async () => {
@@ -69,18 +81,32 @@ export function useSamplePlayback(
       source.start();
 
       // Send chunks to server in sync with playback
+      const playbackStart = Date.now();
+      let cumStart = 0;
+
       for (let i = 0; i < info.total_chunks; i++) {
         if (abortRef.current) break;
         setChunkIndex(i + 1);
+
+        const chunkDur = info.chunk_seconds[i] ?? 5;
+        // Wait until 70% through this chunk's audio before sending
+        const targetMs = (cumStart + chunkDur * 0.7) * 1000;
+        const elapsed = Date.now() - playbackStart;
+        const waitMs = Math.max(0, targetMs - elapsed);
+
+        if (waitMs > 0) {
+          await new Promise<void>((resolve) => {
+            abortResolveRef.current = resolve;
+            setTimeout(() => { abortResolveRef.current = null; resolve(); }, waitMs);
+          });
+        }
+        if (abortRef.current) break;
 
         const blob = await getSampleAudioChunk(i);
         if (abortRef.current) break;
         sendRef.current(blob);
 
-        // Wait for chunk duration before sending next
-        if (i < info.total_chunks - 1) {
-          await new Promise((r) => setTimeout(r, info.chunk_seconds * 1000));
-        }
+        cumStart += chunkDur;
       }
     } catch (err) {
       console.error("[SamplePlayback]", err);

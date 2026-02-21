@@ -1,0 +1,49 @@
+[project]
+name = "medasr-mlx"
+version = "0.1.0"
+description = "Google MedASR (105M Conformer-CTC) ported to MLX for Apple Silicon"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "mlx>=0.30.0",
+    "numpy",
+    "soundfile",
+    "jiwer>=3.0.5",
+    "pyctcdecode>=0.5.0",
+    "kenlm>=0.3.0",
+]
+
+[project.optional-dependencies]
+convert = [
+    "transformers @ git+https://github.com/huggingface/transformers.git@65dc261512cbdb1ee72b88ae5b222f2605aad8e5",
+    "huggingface_hub>=0.30.0",
+    "torch>=2.6.0",
+    "python-dotenv>=1.0.1",
+]
+dev = [
+    "ruff>=0.9.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B905",  # zip without strict=
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["model", "decode", "streaming", "audio_utils"]
