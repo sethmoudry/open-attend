@@ -3,7 +3,7 @@ uvicorn[standard]>=0.24.0
 websockets>=12.0
 python-multipart>=0.0.6
 pydantic>=2.0
-transformers>=4.40.0
+transformers @ git+https://github.com/huggingface/transformers.git@65dc261512cbdb1ee72b88ae5b222f2605aad8e5
 torch>=2.0.0
 torchaudio>=2.0.0
 soundfile>=0.12.0
