@@ -477,11 +477,17 @@ async def transcribe_whisper(audio_bytes: bytes) -> TranscriptChunk:
     # -- Run Whisper inference (in thread to avoid blocking event loop) -------
     def _run_whisper() -> str:
         pipe = _load_whisper_pipeline()
+        # Use return_timestamps=True for long audio (>30s) to avoid mel feature limit
+        use_timestamps = duration > 28.0
         result = pipe(
             {"raw": audio_array, "sampling_rate": sample_rate},
-            return_timestamps=False,
+            return_timestamps=use_timestamps,
         )
-        return result.get("text", "").strip() if isinstance(result, dict) else str(result).strip()
+        if isinstance(result, dict):
+            if use_timestamps and "chunks" in result:
+                return " ".join(c["text"].strip() for c in result["chunks"] if c.get("text", "").strip())
+            return result.get("text", "").strip()
+        return str(result).strip()
 
     try:
         text = await asyncio.to_thread(_run_whisper)

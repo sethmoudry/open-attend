@@ -74,15 +74,18 @@ def _load_pipeline():
     from pyannote.audio import Pipeline
     import torch
 
+    # Log in to HF Hub so pyannote can access gated models without passing token directly
+    # (avoids use_auth_token vs token parameter incompatibilities across versions)
+    from huggingface_hub import login
+    login(token=hf_token, add_to_git_credential=False)
+
     model_name = os.getenv(
         "DIARIZATION_MODEL", "pyannote/speaker-diarization-3.1"
     )
     logger.info("Loading diarization model: %s", model_name)
 
     try:
-        _pipeline = Pipeline.from_pretrained(
-            model_name, token=hf_token
-        )
+        _pipeline = Pipeline.from_pretrained(model_name)
         _pipeline.to(torch.device("cpu"))
         logger.info("Diarization model loaded successfully: %s", model_name)
     except Exception as exc:
@@ -214,7 +217,6 @@ def _extract_embeddings(
         hf_token = os.getenv("HF_TOKEN", "")
         embedding_model = Inference(
             os.getenv("SPEAKER_EMBEDDING_MODEL", "pyannote/embedding"),
-            token=hf_token or None,
         )
         embedding_model.to(torch.device("cpu"))
 
