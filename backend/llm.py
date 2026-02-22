@@ -30,12 +30,12 @@ if os.getenv("LLM_BASE_URL"):
     LLM_MODEL = os.getenv("LLM_MODEL", "google/medgemma-27b-text-it")
     _LLM_API_KEY: Optional[str] = os.getenv("LLM_API_KEY")
 elif _has_cuda():
-    # GPU box — use local medgemma
-    LLM_BASE_URL = "http://localhost:8080/v1"
-    LLM_MODEL = os.getenv("LLM_MODEL", "google/medgemma-27b-text-it")
-    _LLM_API_KEY = None
+    # GPU box — use local MedGemma 4B IT via vLLM
+    LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:8080/v1")
+    LLM_MODEL = os.getenv("LLM_MODEL", "google/medgemma-4b-it")
+    _LLM_API_KEY = os.getenv("LLM_API_KEY", "none")
 else:
-    # Mac / CPU — use OpenRouter
+    # Mac / CPU — use OpenRouter with Flash Lite for dev
     LLM_BASE_URL = "https://openrouter.ai/api/v1"
     LLM_MODEL = os.getenv("LLM_MODEL", "google/gemini-2.5-flash-lite-preview-09-2025")
     _LLM_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_TOKEN")
