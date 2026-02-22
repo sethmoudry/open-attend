@@ -1,4 +1,4 @@
-import type { DiagnosisCode, FollowUpItem, ImageAnalysis, LabReport, PatientSummary, Session, SessionSummary, SOAPNote, VisitType } from "./types";
+import type { DiagnosisCode, FollowUpItem, HearAnalysisResult, ImageAnalysis, LabReport, PatientSummary, Session, SessionSummary, SOAPNote, VisitType } from "./types";
 
 const API_BASE = "/api";
 
@@ -333,4 +333,26 @@ export async function getLlmUsage(): Promise<LlmUsage> {
 
 export async function healthCheck(): Promise<{ status: string }> {
   return request<{ status: string }>("/health");
+}
+
+// ── HeAR audio analysis ──
+
+export async function getSessionAudio(sessionId: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/session/${sessionId}/audio`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "Unknown error");
+    throw new ApiError(res.status, `${res.status}: ${body}`);
+  }
+  return res.blob();
+}
+
+export async function analyzeAudioSegment(
+  sessionId: string,
+  startS: number,
+  endS: number,
+): Promise<HearAnalysisResult> {
+  return request<HearAnalysisResult>(`/session/${sessionId}/analyze-audio`, {
+    method: "POST",
+    body: JSON.stringify({ start_s: startS, end_s: endS }),
+  });
 }

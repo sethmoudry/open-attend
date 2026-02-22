@@ -3,11 +3,13 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useSessionPolling } from "../hooks/useSessionPolling";
 import SOAPEditor from "../components/editor/SOAPEditor";
 import TranscriptReference from "../components/editor/TranscriptReference";
+import WaveformPlayer from "../components/audio/WaveformPlayer";
+import HearResultsPanel from "../components/audio/HearResultsPanel";
 import ExportBar from "../components/export/ExportBar";
 import LabUploadSection from "../components/sidebar/LabUploadSection";
 import { getLlmUsage } from "../api";
 import type { LlmUsage } from "../api";
-import type { LabReport, Session, SOAPNote } from "../types";
+import type { HearAnalysisResult, LabReport, Session, SOAPNote } from "../types";
 
 type SoapSectionKey = "subjective" | "objective" | "assessment" | "plan";
 
@@ -23,6 +25,7 @@ export default function PostVisitLayout() {
 
   const [localSoap, setLocalSoap] = useState<SOAPNote | null>(null);
   const [llmUsage, setLlmUsage] = useState<LlmUsage | null>(null);
+  const [hearResult, setHearResult] = useState<HearAnalysisResult | null>(null);
 
   useEffect(() => {
     getLlmUsage()
@@ -154,6 +157,14 @@ export default function PostVisitLayout() {
               />
             )}
           </div>
+
+          {/* Audio waveform player for HeAR analysis */}
+          {session && (
+            <WaveformPlayer
+              sessionId={session.id}
+              onAnalysisResult={setHearResult}
+            />
+          )}
 
           {/* Transcript reference as collapsible bottom panel */}
           {session && (
@@ -396,6 +407,34 @@ export default function PostVisitLayout() {
                 onLabReport={handleLabReport}
               />
             )}
+
+            {/* HeAR Audio Analysis */}
+            <div className="card">
+              <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <svg
+                  className="h-4 w-4 text-clinical-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z"
+                  />
+                </svg>
+                HeAR Audio Analysis
+              </h3>
+              {hearResult ? (
+                <HearResultsPanel result={hearResult} />
+              ) : (
+                <p className="text-xs text-slate-400">
+                  Select a time range on the waveform above to analyze health
+                  sounds with Google's HeAR model.
+                </p>
+              )}
+            </div>
 
             {/* Image Analysis */}
             <div className="card">

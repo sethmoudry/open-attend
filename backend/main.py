@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from audio_ws import handle_audio_stream
+from audio_ws import get_session_audio, handle_audio_stream
 from export import generate_patient_summary_pdf, generate_soap_pdf, generate_soap_text
 from image_tools import analyze_image, search_similar
 from models import (
@@ -921,6 +921,170 @@ async def sample_audio_chunk(index: int):
     buf = io.BytesIO()
     sf.write(buf, chunk_audio, sr, format="WAV", subtype="PCM_16")
     return Response(content=buf.getvalue(), media_type="audio/wav")
+
+
+# ---------- Eval endpoints ----------
+
+
+class NoteRequest(BaseModel):
+    transcript: str
+    format: str = "both"  # "both" | "soap" | "aci"
+
+
+class JudgeRequest(BaseModel):
+    dialogue: str
+    soap_note: str
+
+
+class EntityRequest(BaseModel):
+    text: str
+
+
+@app.post("/eval/transcribe")
+async def eval_transcribe(audio: UploadFile):
+    """Full ASR pipeline on a single audio file for evaluation."""
+    wav_bytes = await audio.read()
+    from transcribe import transcribe, transcribe_whisper
+    from diarize import diarize
+    from transcript_merge import merge_transcripts
+
+    medasr_result, whisper_result, (segments, embeddings) = await asyncio.gather(
+        transcribe(wav_bytes),
+        transcribe_whisper(wav_bytes),
+        diarize(wav_bytes),
+    )
+
+    seg_dicts = [{"speaker_id": s.speaker_id, "start": s.start, "end": s.end} for s in segments]
+    merged_turns = await merge_transcripts(
+        medasr_text=medasr_result.text,
+        whisper_text=whisper_result.text,
+        speaker_segments=seg_dicts,
+    )
+    merged_text = " ".join(t["text"] for t in merged_turns)
+
+    return {
+        "medasr_text": medasr_result.text,
+        "whisper_text": whisper_result.text,
+        "merged_text": merged_text,
+        "speaker_turns": merged_turns,
+        "diarization_segments": seg_dicts,
+        "n_diarization_segments": len(segments),
+    }
+
+
+@app.post("/eval/generate-notes")
+async def eval_generate_notes(req: NoteRequest):
+    """Generate SOAP and/or ACI notes from a transcript for evaluation."""
+    from tools import generate_aci_note, draft_soap_from_transcript
+
+    results = {}
+    if req.format in ("both", "soap"):
+        soap = await draft_soap_from_transcript(req.transcript)
+        results["soap_note"] = soap["full_text"]
+        results["soap_sections"] = soap["sections"]
+    if req.format in ("both", "aci"):
+        aci = await generate_aci_note(req.transcript)
+        results["aci_note"] = aci["full_text"]
+        results["aci_sections"] = aci["sections"]
+    return results
+
+
+@app.post("/eval/llm-judge")
+async def eval_llm_judge(req: JudgeRequest):
+    """LLM-as-judge for clinical note quality scoring."""
+    from llm import call_medgemma_json
+    from prompts import LLM_JUDGE_PROMPT
+
+    result = await call_medgemma_json(
+        LLM_JUDGE_PROMPT.format(dialogue=req.dialogue[:4000], soap_note=req.soap_note),
+        temperature=0.1,
+        max_tokens=1024,
+    )
+    return result
+
+
+@app.post("/eval/extract-entities")
+async def eval_extract_entities(req: EntityRequest):
+    """LLM-based medical entity extraction for evaluation."""
+    from llm import call_medgemma_json
+    from prompts import ENTITY_EXTRACTION_PROMPT
+
+    text = req.text
+    if len(text) > 12000:
+        mid = len(text) // 2
+        split_at = text.rfind('. ', mid - 500, mid + 500)
+        if split_at == -1:
+            split_at = mid
+        r1 = await call_medgemma_json(
+            ENTITY_EXTRACTION_PROMPT.format(text=text[:split_at]),
+            temperature=0.0,
+            max_tokens=1024,
+        )
+        r2 = await call_medgemma_json(
+            ENTITY_EXTRACTION_PROMPT.format(text=text[split_at:]),
+            temperature=0.0,
+            max_tokens=1024,
+        )
+        entities = sorted(set(r1.get("entities", []) + r2.get("entities", [])))
+        return {"entities": entities}
+
+    result = await call_medgemma_json(
+        ENTITY_EXTRACTION_PROMPT.format(text=text),
+        temperature=0.0,
+        max_tokens=1024,
+    )
+    return result
+
+
+# ---------- HeAR Audio Analysis ----------
+
+
+@app.get("/session/{session_id}/audio")
+async def get_audio(session_id: str):
+    """Return the full visit recording as a WAV file."""
+    session = await store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    wav = get_session_audio(session_id)
+    if wav is None:
+        raise HTTPException(status_code=404, detail="No audio recorded for this session")
+    return Response(content=wav, media_type="audio/wav")
+
+
+class HearAnalysisRequest(BaseModel):
+    start_s: float
+    end_s: float
+
+
+@app.post("/session/{session_id}/analyze-audio")
+async def analyze_audio(session_id: str, req: HearAnalysisRequest):
+    """Run HeAR health acoustic analysis on a selected audio segment."""
+    session = await store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    wav = get_session_audio(session_id)
+    if wav is None:
+        raise HTTPException(status_code=404, detail="No audio recorded for this session")
+    if req.end_s <= req.start_s:
+        raise HTTPException(status_code=400, detail="end_s must be greater than start_s")
+
+    clinical_context = ""
+    if session.patient_context:
+        parts = [
+            p
+            for p in [
+                session.patient_context.name,
+                f"Age {session.patient_context.age}" if session.patient_context.age else None,
+                session.patient_context.chief_complaint,
+            ]
+            if p
+        ]
+        clinical_context = ", ".join(parts)
+
+    from hear_tools import analyze_audio_segment
+
+    result = await analyze_audio_segment(wav, req.start_s, req.end_s, clinical_context)
+    return result
 
 
 # ---------- WebSocket ----------

@@ -158,3 +158,29 @@ export interface SessionSummary {
   patient_context: PatientContext;
   transcript_chunk_count: number;
 }
+
+// HeAR audio analysis
+export interface DetectedSound {
+  sound: string;
+  confidence: number;
+  description: string;
+}
+
+export interface AudioFeatures {
+  rms_level: number;
+  peak_amplitude: number;
+  zero_crossing_rate: number;
+  spectral_centroid_hz: number;
+  energy_variance: number;
+  duration_s: number;
+}
+
+export interface HearAnalysisResult {
+  detected_sounds: DetectedSound[];
+  clinical_relevance: string;
+  recommendation: string;
+  segment_duration: number;
+  audio_features?: AudioFeatures;
+  hear_model_used: boolean;
+  embedding_windows?: number;
+}

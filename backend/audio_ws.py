@@ -22,6 +22,43 @@ from transcript_merge import merge_transcripts
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Session audio storage — keeps raw WAV chunks for post-visit playback/HeAR
+# ---------------------------------------------------------------------------
+
+_session_audio: dict[str, list[bytes]] = {}
+
+
+def store_audio_chunk(session_id: str, wav_bytes: bytes) -> None:
+    """Append a flushed WAV chunk to the session's audio store."""
+    _session_audio.setdefault(session_id, []).append(wav_bytes)
+
+
+def get_session_audio(session_id: str) -> bytes | None:
+    """Return the full recording for a session as a single WAV, or None."""
+    chunks = _session_audio.get(session_id)
+    if not chunks:
+        return None
+    import io
+    import numpy as np
+    import soundfile as sf
+    pcm_parts = []
+    sr = 16000
+    for wav in chunks:
+        arr, _sr = sf.read(io.BytesIO(wav), dtype="float32")
+        pcm_parts.append(arr)
+        sr = _sr
+    combined = np.concatenate(pcm_parts)
+    buf = io.BytesIO()
+    sf.write(buf, combined, sr, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
+def clear_session_audio(session_id: str) -> None:
+    """Free audio storage for a session."""
+    _session_audio.pop(session_id, None)
+
+
+# ---------------------------------------------------------------------------
 # Lightweight text-based speaker heuristic
 # ---------------------------------------------------------------------------
 
@@ -278,6 +315,9 @@ async def handle_audio_stream(websocket: WebSocket, session_id: str) -> None:
         if not result:
             return
         wav_bytes, flushed_dur = result
+
+        # Store raw audio for post-visit playback & HeAR analysis
+        store_audio_chunk(session_id, wav_bytes)
 
         batch_count += 1
         await _send_status("processing")
