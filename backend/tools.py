@@ -629,3 +629,67 @@ async def extract_follow_ups(
             )
         )
     return items
+
+
+# ---------------------------------------------------------------------------
+# Eval: Full-transcript SOAP generation
+# ---------------------------------------------------------------------------
+
+async def draft_soap_from_transcript(transcript: str) -> dict:
+    """Generate a SOAP note from a complete conversation transcript (eval-only).
+
+    Returns:
+        {"full_text": str, "sections": {"subjective": ..., "objective": ..., "assessment": ..., "plan": ...}}
+    """
+    from prompts import FULL_TRANSCRIPT_SOAP_PROMPT
+
+    result = await call_medgemma_json(
+        FULL_TRANSCRIPT_SOAP_PROMPT.format(transcript=transcript),
+        temperature=0.2,
+        max_tokens=2048,
+    )
+    sections = {
+        "subjective": result.get("subjective", ""),
+        "objective": result.get("objective", ""),
+        "assessment": result.get("assessment", ""),
+        "plan": result.get("plan", ""),
+    }
+    full_text = (
+        f"SUBJECTIVE\n{sections['subjective']}\n\n"
+        f"OBJECTIVE\n{sections['objective']}\n\n"
+        f"ASSESSMENT\n{sections['assessment']}\n\n"
+        f"PLAN\n{sections['plan']}"
+    )
+    return {"full_text": full_text, "sections": sections}
+
+
+# ---------------------------------------------------------------------------
+# Eval: ACI-Bench note generation
+# ---------------------------------------------------------------------------
+
+async def generate_aci_note(transcript: str) -> dict:
+    """Generate an ACI-Bench format clinical note from a dialogue (eval-only).
+
+    Returns:
+        {"full_text": str, "sections": {"history_of_present_illness": ..., ...}}
+    """
+    from prompts import ACI_NOTE_PROMPT
+
+    result = await call_medgemma_json(
+        ACI_NOTE_PROMPT.format(transcript=transcript),
+        temperature=0.2,
+        max_tokens=2048,
+    )
+    sections = {
+        "history_of_present_illness": result.get("history_of_present_illness", ""),
+        "physical_examination": result.get("physical_examination", ""),
+        "results": result.get("results", ""),
+        "assessment_and_plan": result.get("assessment_and_plan", ""),
+    }
+    full_text = (
+        f"HISTORY OF PRESENT ILLNESS\n{sections['history_of_present_illness']}\n\n"
+        f"PHYSICAL EXAMINATION\n{sections['physical_examination']}\n\n"
+        f"RESULTS\n{sections['results']}\n\n"
+        f"ASSESSMENT AND PLAN\n{sections['assessment_and_plan']}"
+    )
+    return {"full_text": full_text, "sections": sections}

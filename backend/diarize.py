@@ -45,11 +45,11 @@ def _check_available() -> bool:
     try:
         import pyannote.audio  # noqa: F401
         _available = True
-    except ImportError:
+    except (ImportError, AttributeError, Exception) as exc:
         _available = False
         logger.warning(
-            "pyannote.audio is not installed — speaker diarization disabled. "
-            "Install with: pip install 'pyannote.audio>=3.1.0'"
+            "pyannote.audio unavailable (%s) — speaker diarization disabled.",
+            exc,
         )
     return _available
 

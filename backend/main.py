@@ -15,7 +15,12 @@ from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from audio_ws import get_session_audio, handle_audio_stream
+from audio_ws import handle_audio_stream
+try:
+    from audio_ws import get_session_audio
+except ImportError:
+    def get_session_audio(session_id: str):
+        return None
 from export import generate_patient_summary_pdf, generate_soap_pdf, generate_soap_text
 from image_tools import analyze_image, search_similar
 from models import (
@@ -208,6 +213,16 @@ async def _seed_demo_data() -> None:
 async def lifespan(app: FastAPI):
     await store.start()
     await _seed_demo_data()
+    # Preload ASR models sequentially to avoid torch.device("meta") context
+    # leak when models are first loaded concurrently via asyncio.gather.
+    try:
+        from transcribe import _load_pipeline, _load_whisper_pipeline, _USE_MLX
+        if not _USE_MLX:
+            await asyncio.to_thread(_load_pipeline)
+        await asyncio.to_thread(_load_whisper_pipeline)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("ASR preload failed: %s", exc)
     yield
     await store.stop()
     from llm import shutdown as llm_shutdown

@@ -15,6 +15,59 @@ from models import Speaker, TranscriptChunk
 
 logger = logging.getLogger(__name__)
 
+# --- LASR feature extractor bug workaround (transformers >= 5.2.0, issue #44206) ---
+import transformers as _tf
+if hasattr(_tf, '__version__') and _tf.__version__ >= '5.2.0':
+    logger.warning(
+        "transformers %s may have LasrFeatureExtractor bug (issue #44206). "
+        "Expected pinned commit 65dc261.", _tf.__version__
+    )
+
+    def _patch_lasr_feature_extractor():
+        """Monkey-patch for transformers v5.2.0 regression (issue #44206)."""
+        try:
+            from transformers.models.lasr.feature_extraction_lasr import LasrFeatureExtractor
+            import inspect
+            original = LasrFeatureExtractor._torch_extract_fbank_features
+            if 'center' not in inspect.signature(original).parameters:
+                def patched(self, waveform, device="cpu", center=True):
+                    return original(self, waveform, device)
+                LasrFeatureExtractor._torch_extract_fbank_features = patched
+                logger.info("Applied LASR feature extractor patch (center param workaround)")
+        except (ImportError, AttributeError):
+            pass
+
+    _patch_lasr_feature_extractor()
+# --- End workaround ---
+
+# --- Accelerate integration bug workaround (_is_hf_initialized kwarg leak) ---
+# In transformers 5.0.0.dev0 (commit 65dc261), register_empty_parameter in
+# transformers.integrations.accelerate passes **param.__dict__ (which includes
+# HF-internal keys like '_is_hf_initialized') to torch.nn.Parameter(), causing
+# TypeError.  We monkey-patch torch.nn.Parameter to silently drop unknown kwargs.
+def _patch_torch_parameter_new():
+    """Patch torch.nn.Parameter.__new__ to accept and ignore extra kwargs.
+
+    transformers 5.0.0.dev0 (commit 65dc261) has a bug where
+    register_empty_parameter passes param.__dict__ (including internal HF keys
+    like '_is_hf_initialized') as kwargs to Parameter(), but torch 2.4.x
+    Parameter.__new__ only accepts (data, requires_grad).
+    """
+    try:
+        import torch
+        _orig = torch.nn.Parameter.__new__
+
+        def _tolerant_new(cls, data=None, requires_grad=True, **_extra):
+            return _orig(cls, data=data, requires_grad=requires_grad)
+
+        torch.nn.Parameter.__new__ = staticmethod(_tolerant_new)
+        logger.info("Patched torch.nn.Parameter.__new__ to ignore extra kwargs")
+    except (ImportError, AttributeError) as exc:
+        logger.debug("Skipping torch.nn.Parameter patch: %s", exc)
+
+_patch_torch_parameter_new()
+# --- End accelerate workaround ---
+
 
 # ---------------------------------------------------------------------------
 # Platform detection — pick MLX on Apple Silicon, HF pipeline on CUDA/CPU
@@ -402,20 +455,23 @@ _whisper_pipeline = None
 
 
 def _load_whisper_pipeline():
-    """Load the Whisper ASR pipeline once on first call (CPU only)."""
+    """Load the Whisper ASR pipeline once on first call (GPU if available, else CPU)."""
     global _whisper_pipeline
     if _whisper_pipeline is not None:
         return _whisper_pipeline
 
     from transformers import pipeline as hf_pipeline
+    import torch
 
-    logger.info("Loading Whisper model: %s (CPU)", WHISPER_MODEL)
+    device = 0 if torch.cuda.is_available() else -1
+    device_label = f"cuda:{device}" if device >= 0 else "cpu"
+    logger.info("Loading Whisper model: %s (%s)", WHISPER_MODEL, device_label)
     _whisper_pipeline = hf_pipeline(
         "automatic-speech-recognition",
         model=WHISPER_MODEL,
-        device=-1,
+        device=device,
     )
-    logger.info("Whisper model loaded: %s", WHISPER_MODEL)
+    logger.info("Whisper model loaded: %s on %s", WHISPER_MODEL, device_label)
     return _whisper_pipeline
 
 

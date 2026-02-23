@@ -11,3 +11,5 @@ data/feedback.json
 *.egg-info/
 .venv/
 .DS_Store
+eval/data/
+eval/results/

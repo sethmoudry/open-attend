@@ -40,7 +40,7 @@ else:
     LLM_MODEL = os.getenv("LLM_MODEL", "google/gemini-2.5-flash-lite-preview-09-2025")
     _LLM_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_TOKEN")
 
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "30"))
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 
@@ -172,6 +172,16 @@ def _extract_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
+    # Try to find a JSON array [ ... ]
+    bracket_match = re.search(r"\[.*\]", text, re.DOTALL)
+    if bracket_match:
+        try:
+            parsed = json.loads(bracket_match.group())
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
     # Try to find the first { ... } block
     brace_match = re.search(r"\{.*\}", text, re.DOTALL)
     if brace_match:
@@ -181,7 +191,7 @@ def _extract_json(text: str) -> dict:
             pass
 
     # Last resort: return the text wrapped in a dict
-    logger.warning("Could not parse JSON from LLM response, returning raw text")
+    logger.warning("Could not parse JSON from LLM response (len=%d, first 200: %s), returning raw text", len(text), repr(text[:200]))
     return {"_raw": text}
 
 
